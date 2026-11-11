@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AppConfig } from './configuration';
 
 @Injectable()
 export class AppConfigService {
@@ -19,7 +18,11 @@ export class AppConfigService {
   }
 
   get frontendUrl(): string {
-    return this.configService.get<string>('frontendUrl', '*');
+    return this.configService.get<string>('frontendUrl', 'http://localhost:5173');
+  }
+
+  get allowedOrigins(): string[] {
+    return this.configService.get<string[]>('allowedOrigins', ['http://localhost:5173']);
   }
 
   get corsOrigins(): string | string[] {
@@ -52,4 +55,3 @@ export class AppConfigService {
     return undefined;
   }
 }
-

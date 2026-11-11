@@ -25,3 +25,4 @@ export function getCorsConfig(appConfig: AppConfigService): CorsOptions {
     maxAge: 3600, // Cache preflight OPTIONS response for 1 hour
   };
 }
+
