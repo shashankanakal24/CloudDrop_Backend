@@ -2,18 +2,14 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
-import { AppConfigService } from './config';
+import { AppConfigService, getCorsConfig } from './config';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const appConfig = app.get(AppConfigService);
 
-  // Configure CORS using centralized config
-  app.enableCors({
-    origin: appConfig.corsOrigins,
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-    credentials: appConfig.corsCredentials,
-  });
+  // Apply clean, centralized CORS configuration from src/config/cors.config.ts
+  app.enableCors(getCorsConfig(appConfig));
 
   // Global validation pipe
   app.useGlobalPipes(

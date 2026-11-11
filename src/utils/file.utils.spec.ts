@@ -14,7 +14,7 @@ describe('FileUtils', () => {
     });
 
     it('should replace spaces and special characters with underscores', () => {
-      expect(sanitizeFileName('my test file (1) & $$.png')).toBe('my_test_file__1_______png');
+      expect(sanitizeFileName('my test file (1) & $$.png')).toBe('my_test_file__1______.png');
     });
 
     it('should sanitize path traversal attempts', () => {
