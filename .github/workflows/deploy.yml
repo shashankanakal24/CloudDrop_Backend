@@ -1,0 +1,46 @@
+name: Auto Deploy to AWS EC2
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to EC2 via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            echo ">>> Pulling latest changes from GitHub..."
+            cd /opt/clouddrop
+            git pull origin main
+
+            echo ">>> Rebuilding Docker image..."
+            sudo docker build -t clouddrop-backend:latest .
+
+            echo ">>> Restarting container with zero downtime..."
+            sudo docker stop clouddrop-backend || true
+            sudo docker rm clouddrop-backend || true
+
+            sudo docker run -d \
+              --name clouddrop-backend \
+              --restart always \
+              -p 3000:3000 \
+              -e PORT=3000 \
+              -e NODE_ENV=production \
+              -e AWS_REGION=${{ secrets.AWS_REGION || 'us-east-1' }} \
+              -e S3_BUCKET_NAME=${{ secrets.S3_BUCKET_NAME || 'clouddrop-storage-demo' }} \
+              -e DYNAMODB_TABLE_NAME=CloudDropFiles \
+              clouddrop-backend:latest
+
+            echo ">>> Deployment completed successfully!"
+
