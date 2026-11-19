@@ -90,7 +90,7 @@ describe('FilesService', () => {
   });
 
   describe('getFileDetails', () => {
-    it('should throw BadRequestException if file has expired', async () => {
+    it('should purge file from S3 and throw BadRequestException if file has expired', async () => {
       const expiredRecord: FileRecord = {
         fileId: 'expired-123',
         originalName: 'expired.pdf',
@@ -105,6 +105,43 @@ describe('FilesService', () => {
 
       awsService.getFileRecord = jest.fn().mockResolvedValue(expiredRecord);
       await expect(service.getFileDetails('expired-123')).rejects.toThrow(BadRequestException);
+      expect(awsService.deleteFile).toHaveBeenCalledWith('expired-123', 'uploads/expired-123/expired.pdf');
+    });
+  });
+
+  describe('purgeExpiredFiles', () => {
+    it('should delete only expired files from S3 and DynamoDB', async () => {
+      const records: FileRecord[] = [
+        {
+          fileId: 'expired-1',
+          originalName: 'old.pdf',
+          s3Key: 'uploads/expired-1/old.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 100,
+          status: FileStatus.READY,
+          uploadedAt: new Date().toISOString(),
+          expiresAt: Math.floor(Date.now() / 1000) - 100,
+          downloadCount: 0,
+        },
+        {
+          fileId: 'active-1',
+          originalName: 'current.pdf',
+          s3Key: 'uploads/active-1/current.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 200,
+          status: FileStatus.READY,
+          uploadedAt: new Date().toISOString(),
+          expiresAt: Math.floor(Date.now() / 1000) + 3600,
+          downloadCount: 0,
+        },
+      ];
+
+      awsService.listFileRecords = jest.fn().mockResolvedValue(records);
+      const result = await service.purgeExpiredFiles();
+
+      expect(result.purgedCount).toBe(1);
+      expect(result.purgedFiles).toContain('expired-1');
+      expect(awsService.deleteFile).toHaveBeenCalledWith('expired-1', 'uploads/expired-1/old.pdf');
     });
   });
 

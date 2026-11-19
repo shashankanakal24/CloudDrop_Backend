@@ -107,6 +107,21 @@ export class FilesController {
     return this.filesService.listFiles();
   }
 
+  @Post('cleanup-expired')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Purge all expired files from S3 and DynamoDB',
+    description:
+      'Sweeps through all file records, identifies expired transfers, and permanently deletes both the S3 objects and DynamoDB metadata.',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Expired files purged successfully',
+  })
+  async cleanupExpired() {
+    return this.filesService.purgeExpiredFiles();
+  }
+
   @Get(':fileId')
   @ApiOperation({
     summary: 'Get details for a specific file transfer',

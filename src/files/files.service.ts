@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger, OnModuleInit } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
 import { AwsService, FileRecord } from '../aws/aws.service';
 import { AppConfigService } from '../config';
@@ -7,13 +7,29 @@ import { FileStatus, FILE_CONSTANTS } from '../constants';
 import { buildS3Key, calculateTtlEpochSeconds, isExpired } from '../utils';
 
 @Injectable()
-export class FilesService {
+export class FilesService implements OnModuleInit {
   private readonly logger = new Logger(FilesService.name);
+  private cleanupInterval: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly awsService: AwsService,
     private readonly appConfigService: AppConfigService,
   ) {}
+
+  /**
+   * Lifecycle hook: starts an automatic background sweeper that purges expired files
+   * from both S3 and DynamoDB every 10 minutes.
+   */
+  onModuleInit() {
+    // Run sweeper every 10 minutes
+    const intervalMs = 10 * 60 * 1000;
+    this.cleanupInterval = setInterval(() => {
+      this.purgeExpiredFiles().catch((err) => {
+        this.logger.error(`Periodic expired file cleanup failed: ${err.message}`);
+      });
+    }, intervalMs);
+    this.logger.log('Automated expired file background sweeper initialized (10m interval)');
+  }
 
   async requestUpload(dto: CreateUploadDto) {
     const fileId = uuidv4();
@@ -82,7 +98,7 @@ export class FilesService {
     await this.awsService.saveFileRecord(record);
     this.logger.log(`Multipart file uploaded directly: ${file.originalname} (${fileId})`);
 
-    // 3. Generate instant pre-signed S3 download URL (inline disposition so images, audio, video open directly)
+    // 3. Generate instant pre-signed S3 download URL
     const s3DownloadUrl = await this.awsService.generatePresignedDownloadUrl(
       s3Key,
       file.originalname,
@@ -124,10 +140,32 @@ export class FilesService {
     };
   }
 
+  /**
+   * Lists active file transfers, automatically filtering out expired files
+   * and launching asynchronous background deletion for any expired S3 objects.
+   */
   async listFiles() {
-    return this.awsService.listFileRecords();
+    const records = await this.awsService.listFileRecords();
+    const activeRecords: FileRecord[] = [];
+
+    for (const record of records) {
+      if (isExpired(record.expiresAt)) {
+        // Asynchronously delete expired file from S3 and DynamoDB without blocking list response
+        this.awsService.deleteFile(record.fileId, record.s3Key).catch((err) => {
+          this.logger.warn(`Failed to clean up expired file ${record.fileId}: ${err.message}`);
+        });
+      } else {
+        activeRecords.push(record);
+      }
+    }
+
+    return activeRecords;
   }
 
+  /**
+   * Retrieves file details. If the file has reached its expiry timestamp,
+   * it is immediately purged from S3 storage and DynamoDB before returning an error.
+   */
   async getFileDetails(fileId: string) {
     const record = await this.awsService.getFileRecord(fileId);
     if (!record) {
@@ -135,7 +173,11 @@ export class FilesService {
     }
 
     if (isExpired(record.expiresAt)) {
-      throw new BadRequestException('This file transfer has expired');
+      // Proactively purge from S3 storage and DynamoDB
+      await this.awsService.deleteFile(fileId, record.s3Key).catch((err) => {
+        this.logger.warn(`Failed to delete expired S3 object on access: ${err.message}`);
+      });
+      throw new BadRequestException('This file transfer has expired and has been deleted from S3 storage');
     }
 
     return record;
@@ -180,6 +222,32 @@ export class FilesService {
     await this.awsService.deleteFile(fileId, record.s3Key);
     return {
       message: `File ${record.originalName} (${fileId}) deleted successfully`,
+    };
+  }
+
+  /**
+   * Sweeps the entire database, finds any expired records, and permanently deletes
+   * the files from S3 and DynamoDB.
+   */
+  async purgeExpiredFiles(): Promise<{ purgedCount: number; purgedFiles: string[] }> {
+    const records = await this.awsService.listFileRecords();
+    const purgedFiles: string[] = [];
+
+    for (const record of records) {
+      if (isExpired(record.expiresAt)) {
+        try {
+          await this.awsService.deleteFile(record.fileId, record.s3Key);
+          purgedFiles.push(record.fileId);
+          this.logger.log(`[Auto-Purge] Expired file ${record.originalName} (${record.fileId}) removed from S3`);
+        } catch (err: any) {
+          this.logger.warn(`Failed to auto-purge file ${record.fileId}: ${err.message}`);
+        }
+      }
+    }
+
+    return {
+      purgedCount: purgedFiles.length,
+      purgedFiles,
     };
   }
 }
