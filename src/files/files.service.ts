@@ -180,6 +180,10 @@ export class FilesService implements OnModuleInit {
       throw new BadRequestException('This file transfer has expired and has been deleted from S3 storage');
     }
 
+    if (record.status === FileStatus.PENDING) {
+      throw new BadRequestException('This file upload was never completed or was abandoned.');
+    }
+
     return record;
   }
 
