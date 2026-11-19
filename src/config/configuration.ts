@@ -4,6 +4,7 @@ export interface AppConfig {
   port: number;
   nodeEnv: string;
   isProduction: boolean;
+  appUrl: string;
   frontendUrl: string;
   allowedOrigins: string[];
   cors: {
@@ -49,11 +50,14 @@ export default (): AppConfig => {
   }
 
   const corsOrigin = originsList.includes('*') ? '*' : originsList;
+  const port = parseInt(process.env.PORT, 10) || APP_CONSTANTS.DEFAULT_PORT;
+  const appUrl = (process.env.APP_URL || process.env.BACKEND_URL || `http://localhost:${port}`).replace(/\/+$/, '');
 
   return {
-    port: parseInt(process.env.PORT, 10) || APP_CONSTANTS.DEFAULT_PORT,
+    port,
     nodeEnv,
     isProduction: nodeEnv === 'production',
+    appUrl,
     frontendUrl,
     allowedOrigins: originsList,
     cors: {

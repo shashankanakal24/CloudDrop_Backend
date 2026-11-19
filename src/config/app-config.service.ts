@@ -17,6 +17,10 @@ export class AppConfigService {
     return this.configService.get<boolean>('isProduction', false);
   }
 
+  get appUrl(): string {
+    return this.configService.get<string>('appUrl', 'http://localhost:3000');
+  }
+
   get frontendUrl(): string {
     return this.configService.get<string>('frontendUrl', 'http://localhost:5173');
   }

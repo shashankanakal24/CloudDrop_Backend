@@ -88,19 +88,36 @@ export class AwsService {
   }
 
   /**
-   * Generates a pre-signed S3 GET URL for direct, secure file downloads.
+   * Generates a pre-signed S3 GET URL for direct, secure file view or download.
+   * disposition 'inline' opens images, videos, audio, and PDFs directly in the browser;
+   * disposition 'attachment' forces a file download dialog.
    */
   async generatePresignedDownloadUrl(
     s3Key: string,
     originalName: string,
     expiresInSeconds = FILE_CONSTANTS.PRESIGNED_DOWNLOAD_EXPIRY_SECONDS,
+    disposition: 'inline' | 'attachment' = 'inline',
   ): Promise<string> {
     const command = new GetObjectCommand({
       Bucket: this.bucketName,
       Key: s3Key,
-      ResponseContentDisposition: `attachment; filename="${encodeURIComponent(originalName)}"`,
+      ResponseContentDisposition: `${disposition}; filename="${encodeURIComponent(originalName)}"`,
     });
     return getSignedUrl(this.s3Client, command, { expiresIn: expiresInSeconds });
+  }
+
+  /**
+   * Directly uploads a file buffer to S3 (used for multipart form uploads in Swagger)
+   */
+  async uploadFileBuffer(s3Key: string, buffer: Buffer, mimeType: string): Promise<void> {
+    await this.s3Client.send(
+      new PutObjectCommand({
+        Bucket: this.bucketName,
+        Key: s3Key,
+        Body: buffer,
+        ContentType: mimeType,
+      }),
+    );
   }
 
   /**

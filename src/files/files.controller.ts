@@ -7,8 +7,15 @@ import {
   Param,
   HttpStatus,
   HttpCode,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
+  Req,
+  Res,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
+import { Request, Response } from 'express';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiConsumes, ApiBody } from '@nestjs/swagger';
 import { FilesService } from './files.service';
 import { CreateUploadDto } from './dto/create-upload.dto';
 import { ConfirmUploadDto } from './dto/confirm-upload.dto';
@@ -17,6 +24,51 @@ import { ConfirmUploadDto } from './dto/confirm-upload.dto';
 @Controller('api/files')
 export class FilesController {
   constructor(private readonly filesService: FilesService) {}
+
+  @Post('upload')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary: 'Direct multipart file upload (Swagger browser test)',
+    description:
+      'Upload a file directly using multipart/form-data with a file chooser button in Swagger UI. Uploads the file to S3 and returns a clean shareable download link.',
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: {
+          type: 'string',
+          format: 'binary',
+          description: 'Select a file from your computer to upload directly to S3',
+        },
+        expiryHours: {
+          type: 'number',
+          description: 'Hours until file expires (default 24)',
+          default: 24,
+        },
+      },
+      required: ['file'],
+    },
+  })
+  @ApiResponse({
+    status: HttpStatus.CREATED,
+    description: 'File uploaded to S3 and registered in DynamoDB successfully',
+  })
+  @UseInterceptors(FileInterceptor('file'))
+  async uploadFile(
+    @UploadedFile() file: any,
+    @Req() req: Request,
+    @Body('expiryHours') expiryHours?: number,
+  ) {
+    if (!file) {
+      throw new BadRequestException('No file provided in request body');
+    }
+    const host = req.get('host') || 'localhost:3000';
+    const protocol = req.protocol || 'http';
+    const baseUrl = `${protocol}://${host}`;
+    return this.filesService.uploadDirect(file, expiryHours ? Number(expiryHours) : undefined, baseUrl);
+  }
 
   @Post('upload-url')
   @ApiOperation({

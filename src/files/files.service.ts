@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
 import { AwsService, FileRecord } from '../aws/aws.service';
+import { AppConfigService } from '../config';
 import { CreateUploadDto } from './dto/create-upload.dto';
 import { FileStatus, FILE_CONSTANTS } from '../constants';
 import { buildS3Key, calculateTtlEpochSeconds, isExpired } from '../utils';
@@ -9,7 +10,10 @@ import { buildS3Key, calculateTtlEpochSeconds, isExpired } from '../utils';
 export class FilesService {
   private readonly logger = new Logger(FilesService.name);
 
-  constructor(private readonly awsService: AwsService) {}
+  constructor(
+    private readonly awsService: AwsService,
+    private readonly appConfigService: AppConfigService,
+  ) {}
 
   async requestUpload(dto: CreateUploadDto) {
     const fileId = uuidv4();
@@ -48,6 +52,63 @@ export class FilesService {
     };
   }
 
+  async uploadDirect(
+    file: { originalname: string; mimetype: string; size: number; buffer: Buffer },
+    expiryHours?: number,
+    baseUrl = 'http://localhost:3000',
+  ) {
+    const fileId = uuidv4();
+    const s3Key = buildS3Key(fileId, file.originalname);
+    const hours = expiryHours || FILE_CONSTANTS.DEFAULT_EXPIRY_HOURS;
+    const ttlSeconds = calculateTtlEpochSeconds(hours);
+
+    // 1. Upload file buffer directly to S3
+    await this.awsService.uploadFileBuffer(s3Key, file.buffer, file.mimetype);
+
+    // 2. Save metadata in DynamoDB with READY status
+    const record: FileRecord = {
+      fileId,
+      originalName: file.originalname,
+      s3Key,
+      mimeType: file.mimetype,
+      sizeBytes: file.size,
+      status: FileStatus.READY,
+      uploadedAt: new Date().toISOString(),
+      expiresAt: ttlSeconds,
+      downloadCount: 0,
+      tags: ['multipart-upload'],
+    };
+
+    await this.awsService.saveFileRecord(record);
+    this.logger.log(`Multipart file uploaded directly: ${file.originalname} (${fileId})`);
+
+    // 3. Generate instant pre-signed S3 download URL (inline disposition so images, audio, video open directly)
+    const s3DownloadUrl = await this.awsService.generatePresignedDownloadUrl(
+      s3Key,
+      file.originalname,
+      FILE_CONSTANTS.PRESIGNED_DOWNLOAD_EXPIRY_SECONDS,
+      'inline',
+    );
+
+    // 4. Construct clean, short shareable media links based on APP_URL
+    const rootUrl = (this.appConfigService.appUrl || baseUrl || 'http://localhost:3000').replace(/\/+$/, '');
+    const previewUrl = `${rootUrl}/f/${fileId}`;
+    const downloadUrl = `${rootUrl}/d/${fileId}`;
+
+    return {
+      message: 'File uploaded successfully',
+      downloadLink: downloadUrl,
+      previewLink: previewUrl,
+      fileId,
+      originalName: file.originalname,
+      sizeBytes: file.size,
+      mimeType: file.mimetype,
+      status: FileStatus.READY,
+      expiryHours: hours,
+      expiresAt: new Date(ttlSeconds * 1000).toISOString(),
+    };
+  }
+
   async confirmUpload(fileId: string) {
     const record = await this.awsService.getFileRecord(fileId);
     if (!record) {
@@ -80,22 +141,30 @@ export class FilesService {
     return record;
   }
 
-  async getDownloadUrl(fileId: string) {
+  async getDownloadUrl(fileId: string, forceDownload = false) {
     const record = await this.getFileDetails(fileId);
 
     // Increment download counter in DynamoDB
     const newCount = await this.awsService.incrementDownloadCount(fileId);
+
+    const disposition = forceDownload ? 'attachment' : 'inline';
 
     // Generate pre-signed GET URL (valid for 5 minutes)
     const downloadUrl = await this.awsService.generatePresignedDownloadUrl(
       record.s3Key,
       record.originalName,
       FILE_CONSTANTS.PRESIGNED_DOWNLOAD_EXPIRY_SECONDS,
+      disposition,
     );
+
+    const rootUrl = this.appConfigService.appUrl.replace(/\/+$/, '');
 
     return {
       fileId,
       originalName: record.originalName,
+      mimeType: record.mimeType,
+      mediaUrl: `${rootUrl}/f/${fileId}`,
+      directDownloadUrl: `${rootUrl}/f/${fileId}?download=true`,
       downloadUrl,
       downloadCount: newCount,
       expiresInSeconds: FILE_CONSTANTS.PRESIGNED_DOWNLOAD_EXPIRY_SECONDS,

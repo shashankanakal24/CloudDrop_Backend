@@ -2,11 +2,16 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { FilesService } from './files.service';
 import { AwsService, FileRecord } from '../aws/aws.service';
+import { AppConfigService } from '../config';
 import { FileStatus } from '../constants';
 
 describe('FilesService', () => {
   let service: FilesService;
   let awsService: jest.Mocked<Partial<AwsService>>;
+
+  const mockAppConfigService = {
+    appUrl: 'http://localhost:3000',
+  };
 
   beforeEach(async () => {
     awsService = {
@@ -26,6 +31,10 @@ describe('FilesService', () => {
         {
           provide: AwsService,
           useValue: awsService,
+        },
+        {
+          provide: AppConfigService,
+          useValue: mockAppConfigService,
         },
       ],
     }).compile();
