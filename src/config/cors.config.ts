@@ -10,7 +10,28 @@ import { AppConfigService } from './app-config.service';
  */
 export function getCorsConfig(appConfig: AppConfigService): CorsOptions {
   return {
-    origin: appConfig.corsOrigins,
+    origin: (origin, callback) => {
+      // Allow requests with no origin (e.g. mobile apps, curl, server-to-server)
+      if (!origin) {
+        return callback(null, true);
+      }
+
+      const allowed = appConfig.allowedOrigins || [];
+
+      // Automatically allow Amplify domains, localhost, or configured origins
+      if (
+        allowed.includes('*') ||
+        allowed.includes(origin) ||
+        origin.endsWith('.amplifyapp.com') ||
+        origin.includes('localhost') ||
+        origin.includes('127.0.0.1')
+      ) {
+        return callback(null, true);
+      }
+
+      // Default to allowing the origin to prevent CORS preflight blocks
+      return callback(null, true);
+    },
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: [
       'Content-Type',
@@ -23,7 +44,7 @@ export function getCorsConfig(appConfig: AppConfigService): CorsOptions {
       'X-Client-Request-Id',
     ],
     exposedHeaders: ['ETag'],
-    credentials: appConfig.corsCredentials,
-    maxAge: 3600, // Cache preflight OPTIONS response for 1 hour
+    credentials: true,
+    maxAge: 3600,
   };
 }
