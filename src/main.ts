@@ -27,7 +27,7 @@ async function bootstrap() {
   const config = new DocumentBuilder()
     .setTitle('CloudDrop API')
     .setDescription(
-      'CloudDrop: Cloud-Native Intelligent File Transfer Platform API powered by AWS S3, DynamoDB, Lambda, and EC2 Auto Scaling.',
+      'CloudDrop: A easy and Encrypted way of data sharing.',
     )
     .setVersion('1.0')
     .addTag('Files', 'Operations related to file upload, download, and metadata management')

@@ -23,20 +23,13 @@ describe('AppController', () => {
     appController = app.get<AppController>(AppController);
   });
 
-  describe('health check endpoints', () => {
-    it('getHealth() should return UP status for NLB target group', () => {
+  describe('health check endpoint', () => {
+    it('getHealth() should return UP status and uptime for NLB target group', () => {
       const response = appController.getHealth();
       expect(response.status).toBe('UP');
       expect(response.service).toBe('clouddrop-backend');
-      expect(response.timestamp).toBeDefined();
-    });
-
-    it('getApiHealth() should return API health with uptime', () => {
-      const response = appController.getApiHealth();
-      expect(response.status).toBe('UP');
-      expect(response.service).toBe('clouddrop-backend');
       expect(response.uptime).toBeGreaterThanOrEqual(0);
+      expect(response.timestamp).toBeDefined();
     });
   });
 });
-

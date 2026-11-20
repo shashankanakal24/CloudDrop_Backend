@@ -1,24 +1,7 @@
-import { APP_CONSTANTS } from '../constants';
+import { APP_CONSTANTS, REGEX_PATTERNS } from '../constants';
+import { AppConfig } from './interfaces/app-config.interface';
 
-export interface AppConfig {
-  port: number;
-  nodeEnv: string;
-  isProduction: boolean;
-  appUrl: string;
-  frontendUrl: string;
-  allowedOrigins: string[];
-  cors: {
-    origin: string | string[];
-    credentials: boolean;
-  };
-  aws: {
-    region: string;
-    s3BucketName: string;
-    dynamoDbTableName: string;
-    accessKeyId?: string;
-    secretAccessKey?: string;
-  };
-}
+export { AppConfig };
 
 export default (): AppConfig => {
   const nodeEnv = process.env.NODE_ENV || 'development';
@@ -51,7 +34,7 @@ export default (): AppConfig => {
 
   const corsOrigin = originsList.includes('*') ? '*' : originsList;
   const port = parseInt(process.env.PORT, 10) || APP_CONSTANTS.DEFAULT_PORT;
-  const appUrl = (process.env.APP_URL || process.env.BACKEND_URL || `http://localhost:${port}`).replace(/\/+$/, '');
+  const appUrl = (process.env.APP_URL || process.env.BACKEND_URL || `http://localhost:${port}`).replace(REGEX_PATTERNS.TRAILING_SLASH, '');
 
   return {
     port,

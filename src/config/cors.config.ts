@@ -1,50 +1,42 @@
 import { CorsOptions } from '@nestjs/common/interfaces/external/cors-options.interface';
 import { AppConfigService } from './app-config.service';
+import { CORS_CONSTANTS, REGEX_PATTERNS } from '../constants';
 
 /**
  * Builds the complete CORS configuration object.
  * Reads allowed frontend origins from AppConfigService (which reads ALLOWED_ORIGINS and FRONTEND_URL from .env).
  *
- * Allows the React frontend (running locally on localhost:5173 or
- * hosted on AWS Amplify) to securely communicate with the NestJS backend without CORS blocking.
+ * Allows only explicitly whitelisted origins (comma-separated in .env) to securely communicate with the NestJS backend.
  */
 export function getCorsConfig(appConfig: AppConfigService): CorsOptions {
   return {
     origin: (origin, callback) => {
-      // Allow requests with no origin (e.g. mobile apps, curl, server-to-server)
+      // 1. Allow tools without an origin header (e.g. mobile apps, curl, Postman, server-to-server)
       if (!origin) {
         return callback(null, true);
       }
 
-      const allowed = appConfig.allowedOrigins || [];
+      // 2. Strict Whitelist: Read comma-separated origins from .env and normalize them (trim spaces & trailing slashes)
+      const allowedOrigins = (appConfig.allowedOrigins || []).map((o) =>
+        o.trim().replace(REGEX_PATTERNS.TRAILING_SLASH, ''),
+      );
 
-      // Automatically allow Amplify domains, localhost, or configured origins
-      if (
-        allowed.includes('*') ||
-        allowed.includes(origin) ||
-        origin.endsWith('.amplifyapp.com') ||
-        origin.includes('localhost') ||
-        origin.includes('127.0.0.1')
-      ) {
-        return callback(null, true);
+      const incomingOrigin = origin.trim().replace(REGEX_PATTERNS.TRAILING_SLASH, '');
+
+      // 3. Check if the caller is in your whitelist
+      if (allowedOrigins.includes(incomingOrigin)) {
+        return callback(null, true); // ALLOW
       }
 
-      // Default to allowing the origin to prevent CORS preflight blocks
-      return callback(null, true);
+      // 4. BLOCK any unknown or malicious website!
+      return callback(
+        new Error(`CORS Error: Origin ${origin} is not allowed by CORS whitelist`),
+      );
     },
-    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-    allowedHeaders: [
-      'Content-Type',
-      'Authorization',
-      'X-Requested-With',
-      'Accept',
-      'Origin',
-      'X-Client-Timestamp',
-      'X-Client-Platform',
-      'X-Client-Request-Id',
-    ],
-    exposedHeaders: ['ETag'],
+    methods: [...CORS_CONSTANTS.ALLOWED_METHODS],
+    allowedHeaders: [...CORS_CONSTANTS.ALLOWED_HEADERS],
+    exposedHeaders: [...CORS_CONSTANTS.EXPOSED_HEADERS],
     credentials: true,
-    maxAge: 3600,
+    maxAge: CORS_CONSTANTS.MAX_AGE_SECONDS,
   };
 }

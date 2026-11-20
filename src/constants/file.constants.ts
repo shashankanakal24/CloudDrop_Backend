@@ -3,6 +3,7 @@ export enum FileStatus {
   PROCESSING = 'PROCESSING',
   READY = 'READY',
   EXPIRED = 'EXPIRED',
+  DELETED = 'DELETED',
 }
 
 export const FILE_CONSTANTS = {
@@ -13,6 +14,7 @@ export const FILE_CONSTANTS = {
   PRESIGNED_DOWNLOAD_EXPIRY_SECONDS: 300, // 5 minutes
   MAX_FILE_SIZE_BYTES: 5 * 1024 * 1024 * 1024, // 5 GB
   S3_UPLOAD_PREFIX: 'uploads',
+  SECONDS_PER_HOUR: 3600,
 } as const;
 
 export const APP_CONSTANTS = {

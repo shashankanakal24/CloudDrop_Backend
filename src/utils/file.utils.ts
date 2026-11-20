@@ -1,11 +1,11 @@
-import { FILE_CONSTANTS } from '../constants';
+import { FILE_CONSTANTS, REGEX_PATTERNS } from '../constants';
 
 /**
  * Sanitizes a file name by removing dangerous characters and spaces
  */
 export function sanitizeFileName(fileName: string): string {
   if (!fileName) return 'unnamed_file';
-  return fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+  return fileName.replace(REGEX_PATTERNS.FILENAME_SPECIAL_CHARS, '_');
 }
 
 /**
@@ -26,7 +26,7 @@ export function calculateTtlEpochSeconds(expiryHours: number = FILE_CONSTANTS.DE
     Math.min(expiryHours, FILE_CONSTANTS.MAX_EXPIRY_HOURS),
   );
   const nowSeconds = Math.floor(Date.now() / 1000);
-  return nowSeconds + clampedHours * 3600;
+  return nowSeconds + clampedHours * FILE_CONSTANTS.SECONDS_PER_HOUR;
 }
 
 /**
@@ -47,4 +47,49 @@ export function formatBytes(bytes: number): string {
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
 }
+
+/**
+ * Resolves accurate MIME types with charset for previewable files.
+ * Ensures browsers render text, json, pdf, and images inline rather than downloading them.
+ */
+export function getMimeTypeFromFileName(fileName: string, fallback = 'application/octet-stream'): string {
+  if (!fileName) return fallback;
+  const ext = fileName.split('.').pop()?.toLowerCase();
+  switch (ext) {
+    case 'txt':
+    case 'log':
+      return 'text/plain; charset=utf-8';
+    case 'csv':
+      return 'text/csv; charset=utf-8';
+    case 'json':
+      return 'application/json; charset=utf-8';
+    case 'md':
+      return 'text/markdown; charset=utf-8';
+    case 'html':
+    case 'htm':
+      return 'text/html; charset=utf-8';
+    case 'pdf':
+      return 'application/pdf';
+    case 'png':
+      return 'image/png';
+    case 'jpg':
+    case 'jpeg':
+      return 'image/jpeg';
+    case 'gif':
+      return 'image/gif';
+    case 'webp':
+      return 'image/webp';
+    case 'svg':
+      return 'image/svg+xml';
+    case 'mp4':
+      return 'video/mp4';
+    case 'mp3':
+      return 'audio/mpeg';
+    case 'wav':
+      return 'audio/wav';
+    default:
+      return fallback;
+  }
+}
+
 

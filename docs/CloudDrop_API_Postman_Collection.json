@@ -1,0 +1,138 @@
+{
+  "info": {
+    "_postman_id": "c10udd0p-b4ck-3nd0-911m-p0stm4nc011",
+    "name": "CloudDrop API",
+    "description": "CloudDrop: An easy and encrypted way of cloud file sharing. Powered by AWS S3, DynamoDB, and EC2.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://3.87.212.178:3000",
+      "type": "string"
+    },
+    {
+      "key": "clientId",
+      "value": "my-browser-chrome-01",
+      "type": "string"
+    },
+    {
+      "key": "fileId",
+      "value": "3aa39df1-863a-4a61-9f75-e9dfacb8e30b",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Files",
+      "item": [
+        {
+          "name": "1. Upload File (1-Step Multipart)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-client-id",
+                "value": "{{clientId}}",
+                "description": "Unique browser/client ID for privacy isolation",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "description": "Select file to upload to S3"
+                },
+                {
+                  "key": "expiryHours",
+                  "value": "24",
+                  "type": "text",
+                  "description": "Hours until link expires (1 to 168 hours)"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/files/upload",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "files", "upload"]
+            },
+            "description": "Upload a file directly. Saves file to S3 and DynamoDB with status READY. Returns 24-hr downloadLink and shareLink immediately."
+          },
+          "response": []
+        },
+        {
+          "name": "2. Get Active Files List",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-client-id",
+                "value": "{{clientId}}",
+                "description": "Unique browser/client ID for privacy isolation",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/files/active/files/list",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "files", "active", "files", "list"]
+            },
+            "description": "Returns active files uploaded by this browser client. Each item includes fileId, originalName, sizeBytes, downloadLink, and shareLink."
+          },
+          "response": []
+        },
+        {
+          "name": "3. Get File Metadata (Recipient Page)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/files/{{fileId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "files", "{{fileId}}"]
+            },
+            "description": "Used by frontend recipient download page (/download/:fileId) to display filename, size, expiry time, and direct download link."
+          },
+          "response": []
+        },
+        {
+          "name": "4. Delete File (Soft Delete)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/files/{{fileId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "files", "{{fileId}}"]
+            },
+            "description": "Deletes the physical file from S3 to eliminate storage fees, and updates DynamoDB status to DELETED for audit tracking."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["health"]
+            },
+            "description": "Health check endpoint for AWS Target Group, NLB, and uptime monitoring."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
+

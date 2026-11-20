@@ -1,26 +1,18 @@
 import { Controller, Get, Param, Query, Res, HttpStatus } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiParam, ApiQuery } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiExcludeEndpoint } from '@nestjs/swagger';
 import { Response } from 'express';
 import { FilesService } from './files/files.service';
+import { REGEX_PATTERNS } from './constants';
+import { getMimeTypeFromFileName } from './utils/file.utils';
 
-@ApiTags('Health')
 @Controller()
 export class AppController {
   constructor(private readonly filesService: FilesService) {}
 
+  @ApiTags('Health')
   @Get('health')
   @ApiOperation({ summary: 'Target group / NLB health check endpoint' })
   getHealth() {
-    return {
-      status: 'UP',
-      service: 'clouddrop-backend',
-      timestamp: new Date().toISOString(),
-    };
-  }
-
-  @Get('api/health')
-  @ApiOperation({ summary: 'API specific health check endpoint' })
-  getApiHealth() {
     return {
       status: 'UP',
       service: 'clouddrop-backend',
@@ -29,43 +21,56 @@ export class AppController {
     };
   }
 
-  private extractUuid(raw: string): string {
-    const match = raw.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
-    return match ? match[0] : raw.replace(/["',]+/g, '').trim();
-  }
-
+  /**
+   * Internal Short Link Proxy for Direct Download.
+   * Excluded from Swagger UI to keep docs minimal.
+   * Completely masks S3 bucket name and streams the file directly to the client.
+   */
+  @ApiExcludeEndpoint()
   @Get(['d/:fileId', 'd/:fileId*'])
-  @ApiOperation({
-    summary: 'Direct download link - press enter and file downloads immediately',
-    description: 'Instant download link. Automatically triggers file download in any browser without needing confirmation.',
-  })
-  @ApiParam({ name: 'fileId', description: 'Unique UUID of the file' })
   async forceDownload(
     @Param('fileId') fileId: string,
     @Res() res: Response,
   ) {
-    const cleanFileId = this.extractUuid(fileId);
-    const { downloadUrl } = await this.filesService.getDownloadUrl(cleanFileId, true);
-    return res.redirect(HttpStatus.FOUND, downloadUrl);
+    const match = fileId.match(REGEX_PATTERNS.UUID);
+    const cleanFileId = match ? match[0] : fileId.replace(REGEX_PATTERNS.QUOTES_AND_COMMAS, '').trim();
+    const { stream, originalName, mimeType, sizeBytes } = await this.filesService.getFileStream(cleanFileId);
+
+    res.set({
+      'Content-Type': mimeType || 'application/octet-stream',
+      'Content-Disposition': `attachment; filename="${encodeURIComponent(originalName)}"`,
+      'Content-Length': String(sizeBytes),
+    });
+    return stream.pipe(res);
   }
 
+  /**
+   * Internal Short Link Proxy for Inline Preview.
+   * Excluded from Swagger UI to keep docs minimal.
+   * Completely masks S3 bucket name and streams file inline.
+   */
+  @ApiExcludeEndpoint()
   @Get(['f/:fileId', 'f/:fileId*'])
-  @ApiOperation({
-    summary: 'Direct short media link to view/stream or download file',
-    description:
-      'Clean short link. Opens images, audio, video, and PDFs directly in the browser. Add ?download=true to force a download.',
-  })
-  @ApiParam({ name: 'fileId', description: 'Unique UUID of the file' })
-  @ApiQuery({ name: 'download', required: false, description: 'Set to true to force download dialog' })
   async viewOrDownload(
     @Param('fileId') fileId: string,
     @Query('download') download: string,
     @Res() res: Response,
   ) {
-    const cleanFileId = this.extractUuid(fileId);
+    const match = fileId.match(REGEX_PATTERNS.UUID);
+    const cleanFileId = match ? match[0] : fileId.replace(REGEX_PATTERNS.QUOTES_AND_COMMAS, '').trim();
     const isDownload = download === 'true' || download === '1';
-    const { downloadUrl } = await this.filesService.getDownloadUrl(cleanFileId, isDownload);
-    return res.redirect(HttpStatus.FOUND, downloadUrl);
+    const { stream, originalName, mimeType, sizeBytes } = await this.filesService.getFileStream(cleanFileId);
+
+    const disposition = isDownload ? 'attachment' : 'inline';
+    const effectiveMimeType = isDownload
+      ? (mimeType || 'application/octet-stream')
+      : getMimeTypeFromFileName(originalName, mimeType || 'application/octet-stream');
+
+    res.set({
+      'Content-Type': effectiveMimeType,
+      'Content-Disposition': `${disposition}; filename="${encodeURIComponent(originalName)}"`,
+      'Content-Length': String(sizeBytes),
+    });
+    return stream.pipe(res);
   }
 }
-

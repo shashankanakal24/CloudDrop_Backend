@@ -4,6 +4,7 @@ import {
   calculateTtlEpochSeconds,
   isExpired,
   formatBytes,
+  getMimeTypeFromFileName,
 } from './file.utils';
 import { FILE_CONSTANTS } from '../constants';
 
@@ -75,6 +76,22 @@ describe('FileUtils', () => {
       expect(formatBytes(1024)).toBe('1 KB');
       expect(formatBytes(1024 * 1024)).toBe('1 MB');
       expect(formatBytes(1024 * 1024 * 1024)).toBe('1 GB');
+    });
+  });
+
+  describe('getMimeTypeFromFileName', () => {
+    it('should resolve text files to text/plain with utf-8 charset for browser preview', () => {
+      expect(getMimeTypeFromFileName('notes.txt')).toBe('text/plain; charset=utf-8');
+      expect(getMimeTypeFromFileName('server.log')).toBe('text/plain; charset=utf-8');
+    });
+
+    it('should resolve images and PDFs for inline browser viewing', () => {
+      expect(getMimeTypeFromFileName('photo.png')).toBe('image/png');
+      expect(getMimeTypeFromFileName('document.pdf')).toBe('application/pdf');
+    });
+
+    it('should fallback to provided default for unknown extensions', () => {
+      expect(getMimeTypeFromFileName('archive.xyz', 'application/octet-stream')).toBe('application/octet-stream');
     });
   });
 });

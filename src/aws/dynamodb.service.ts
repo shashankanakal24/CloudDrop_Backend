@@ -1,6 +1,4 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import {
   DynamoDBDocumentClient,
@@ -11,37 +9,17 @@ import {
   DeleteCommand,
 } from '@aws-sdk/lib-dynamodb';
 import { AppConfigService } from '../config';
-import { FileStatus, FILE_CONSTANTS } from '../constants';
-
-export interface FileRecord {
-  fileId: string;
-  originalName: string;
-  s3Key: string;
-  mimeType: string;
-  sizeBytes: number;
-  status: FileStatus;
-  uploadedAt: string;
-  expiresAt: number; // Unix timestamp in seconds for DynamoDB TTL
-  downloadCount: number;
-  tags?: string[];
-  processedMetadata?: {
-    md5Checksum?: string;
-    previewGenerated?: boolean;
-    lambdaProcessedAt?: string;
-  };
-}
+import { FileStatus } from '../constants';
+import { FileRecord } from './interfaces/file-record.interface';
 
 @Injectable()
-export class AwsService {
-  private readonly logger = new Logger(AwsService.name);
-  private readonly s3Client: S3Client;
+export class DynamoDbService {
+  private readonly logger = new Logger(DynamoDbService.name);
   private readonly docClient: DynamoDBDocumentClient;
-  private readonly bucketName: string;
   private readonly tableName: string;
 
   constructor(private readonly appConfigService: AppConfigService) {
     const region = this.appConfigService.awsRegion;
-    this.bucketName = this.appConfigService.s3BucketName;
     this.tableName = this.appConfigService.dynamoDbTableName;
 
     // Use credentials from config if provided (e.g. local dev);
@@ -52,72 +30,16 @@ export class AwsService {
       clientConfig.credentials = credentials;
     }
 
-    this.s3Client = new S3Client(clientConfig);
-
     const ddbClient = new DynamoDBClient(clientConfig);
     this.docClient = DynamoDBDocumentClient.from(ddbClient, {
       marshallOptions: { removeUndefinedValues: true },
     });
 
-    this.logger.log(`Initialized AWS Service for Region: ${region}, Bucket: ${this.bucketName}, Table: ${this.tableName}`);
-  }
-
-  getBucketName(): string {
-    return this.bucketName;
+    this.logger.log(`Initialized DynamoDB Service for Region: ${region}, Table: ${this.tableName}`);
   }
 
   getTableName(): string {
     return this.tableName;
-  }
-
-  /**
-   * Generates a pre-signed S3 PUT URL for secure, direct client-to-S3 uploads.
-   * This offloads heavy file uploads from EC2, saving bandwidth and compute.
-   */
-  async generatePresignedUploadUrl(
-    s3Key: string,
-    mimeType: string,
-    expiresInSeconds = FILE_CONSTANTS.PRESIGNED_UPLOAD_EXPIRY_SECONDS,
-  ): Promise<string> {
-    const command = new PutObjectCommand({
-      Bucket: this.bucketName,
-      Key: s3Key,
-      ContentType: mimeType,
-    });
-    return getSignedUrl(this.s3Client, command, { expiresIn: expiresInSeconds });
-  }
-
-  /**
-   * Generates a pre-signed S3 GET URL for direct, secure file view or download.
-   * disposition 'inline' opens images, videos, audio, and PDFs directly in the browser;
-   * disposition 'attachment' forces a file download dialog.
-   */
-  async generatePresignedDownloadUrl(
-    s3Key: string,
-    originalName: string,
-    expiresInSeconds = FILE_CONSTANTS.PRESIGNED_DOWNLOAD_EXPIRY_SECONDS,
-    disposition: 'inline' | 'attachment' = 'inline',
-  ): Promise<string> {
-    const command = new GetObjectCommand({
-      Bucket: this.bucketName,
-      Key: s3Key,
-      ResponseContentDisposition: `${disposition}; filename="${encodeURIComponent(originalName)}"`,
-    });
-    return getSignedUrl(this.s3Client, command, { expiresIn: expiresInSeconds });
-  }
-
-  /**
-   * Directly uploads a file buffer to S3 (used for multipart form uploads in Swagger)
-   */
-  async uploadFileBuffer(s3Key: string, buffer: Buffer, mimeType: string): Promise<void> {
-    await this.s3Client.send(
-      new PutObjectCommand({
-        Bucket: this.bucketName,
-        Key: s3Key,
-        Body: buffer,
-        ContentType: mimeType,
-      }),
-    );
   }
 
   /**
@@ -178,7 +100,7 @@ export class AwsService {
   }
 
   /**
-   * Mark file status in DynamoDB
+   * Update file status in DynamoDB
    */
   async updateFileStatus(fileId: string, status: FileStatus): Promise<void> {
     await this.docClient.send(
@@ -193,16 +115,31 @@ export class AwsService {
   }
 
   /**
-   * Delete file from S3 and DynamoDB
+   * Updates file status and updatedAt timestamp (used for audit tracking on soft delete / expiry)
    */
-  async deleteFile(fileId: string, s3Key: string): Promise<void> {
-    await this.s3Client.send(
-      new DeleteObjectCommand({
-        Bucket: this.bucketName,
-        Key: s3Key,
+  async updateFileAuditStatus(
+    fileId: string,
+    status: FileStatus.EXPIRED | FileStatus.DELETED,
+  ): Promise<void> {
+    const nowIso = new Date().toISOString();
+    await this.docClient.send(
+      new UpdateCommand({
+        TableName: this.tableName,
+        Key: { fileId },
+        UpdateExpression: 'SET #s = :status, updatedAt = :updatedAt',
+        ExpressionAttributeNames: { '#s': 'status' },
+        ExpressionAttributeValues: {
+          ':status': status,
+          ':updatedAt': nowIso,
+        },
       }),
     );
+  }
 
+  /**
+   * Hard-deletes a record from DynamoDB
+   */
+  async deleteFileRecord(fileId: string): Promise<void> {
     await this.docClient.send(
       new DeleteCommand({
         TableName: this.tableName,
@@ -211,3 +148,4 @@ export class AwsService {
     );
   }
 }
+

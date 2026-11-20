@@ -1,36 +1,51 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { FilesService } from './files.service';
-import { AwsService, FileRecord } from '../aws/aws.service';
+import { S3Service } from '../aws/s3.service';
+import { DynamoDbService } from '../aws/dynamodb.service';
+import { FileRecord } from '../aws/interfaces/file-record.interface';
 import { AppConfigService } from '../config';
 import { FileStatus } from '../constants';
 
 describe('FilesService', () => {
   let service: FilesService;
-  let awsService: jest.Mocked<Partial<AwsService>>;
+  let s3Service: jest.Mocked<Partial<S3Service>>;
+  let dynamoDbService: jest.Mocked<Partial<DynamoDbService>>;
 
   const mockAppConfigService = {
     appUrl: 'http://localhost:3000',
+    frontendUrl: 'http://localhost:5173',
   };
 
   beforeEach(async () => {
-    awsService = {
+    s3Service = {
       generatePresignedUploadUrl: jest.fn().mockResolvedValue('https://s3.amazonaws.com/test-upload-url'),
       generatePresignedDownloadUrl: jest.fn().mockResolvedValue('https://s3.amazonaws.com/test-download-url'),
+      getFileStream: jest.fn(),
+      uploadFileBuffer: jest.fn().mockResolvedValue(undefined),
+      deleteObject: jest.fn().mockResolvedValue(undefined),
+    };
+
+    dynamoDbService = {
       saveFileRecord: jest.fn().mockResolvedValue(undefined),
       getFileRecord: jest.fn(),
       listFileRecords: jest.fn(),
       incrementDownloadCount: jest.fn().mockResolvedValue(1),
       updateFileStatus: jest.fn().mockResolvedValue(undefined),
-      deleteFile: jest.fn().mockResolvedValue(undefined),
+      updateFileAuditStatus: jest.fn().mockResolvedValue(undefined),
+      deleteFileRecord: jest.fn().mockResolvedValue(undefined),
     };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         FilesService,
         {
-          provide: AwsService,
-          useValue: awsService,
+          provide: S3Service,
+          useValue: s3Service,
+        },
+        {
+          provide: DynamoDbService,
+          useValue: dynamoDbService,
         },
         {
           provide: AppConfigService,
@@ -58,7 +73,7 @@ describe('FilesService', () => {
       expect(result.uploadUrl).toBe('https://s3.amazonaws.com/test-upload-url');
       expect(result.s3Key).toContain('uploads/');
       expect(result.s3Key).toContain('test-doc.pdf');
-      expect(awsService.saveFileRecord).toHaveBeenCalledTimes(1);
+      expect(dynamoDbService.saveFileRecord).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -76,15 +91,15 @@ describe('FilesService', () => {
         downloadCount: 0,
       };
 
-      awsService.getFileRecord = jest.fn().mockResolvedValue(mockRecord);
+      dynamoDbService.getFileRecord = jest.fn().mockResolvedValue(mockRecord);
 
       const result = await service.confirmUpload('mock-123');
       expect(result.status).toBe(FileStatus.READY);
-      expect(awsService.updateFileStatus).toHaveBeenCalledWith('mock-123', FileStatus.READY);
+      expect(dynamoDbService.updateFileStatus).toHaveBeenCalledWith('mock-123', FileStatus.READY);
     });
 
     it('should throw NotFoundException if file record does not exist', async () => {
-      awsService.getFileRecord = jest.fn().mockResolvedValue(null);
+      dynamoDbService.getFileRecord = jest.fn().mockResolvedValue(null);
       await expect(service.confirmUpload('non-existent')).rejects.toThrow(NotFoundException);
     });
   });
@@ -103,14 +118,15 @@ describe('FilesService', () => {
         downloadCount: 0,
       };
 
-      awsService.getFileRecord = jest.fn().mockResolvedValue(expiredRecord);
+      dynamoDbService.getFileRecord = jest.fn().mockResolvedValue(expiredRecord);
       await expect(service.getFileDetails('expired-123')).rejects.toThrow(BadRequestException);
-      expect(awsService.deleteFile).toHaveBeenCalledWith('expired-123', 'uploads/expired-123/expired.pdf');
+      expect(s3Service.deleteObject).toHaveBeenCalledWith('uploads/expired-123/expired.pdf');
+      expect(dynamoDbService.updateFileAuditStatus).toHaveBeenCalledWith('expired-123', FileStatus.EXPIRED);
     });
   });
 
   describe('purgeExpiredFiles', () => {
-    it('should delete only expired files from S3 and DynamoDB', async () => {
+    it('should soft-delete only expired files from S3 while retaining audit trail', async () => {
       const records: FileRecord[] = [
         {
           fileId: 'expired-1',
@@ -136,12 +152,59 @@ describe('FilesService', () => {
         },
       ];
 
-      awsService.listFileRecords = jest.fn().mockResolvedValue(records);
+      dynamoDbService.listFileRecords = jest.fn().mockResolvedValue(records);
       const result = await service.purgeExpiredFiles();
 
       expect(result.purgedCount).toBe(1);
       expect(result.purgedFiles).toContain('expired-1');
-      expect(awsService.deleteFile).toHaveBeenCalledWith('expired-1', 'uploads/expired-1/old.pdf');
+      expect(s3Service.deleteObject).toHaveBeenCalledWith('uploads/expired-1/old.pdf');
+      expect(dynamoDbService.updateFileAuditStatus).toHaveBeenCalledWith('expired-1', FileStatus.EXPIRED);
+    });
+  });
+
+  describe('listFiles', () => {
+    it('should return empty list when no uploaderId is provided to protect user privacy', async () => {
+      const result = await service.listFiles();
+      expect(result).toEqual([]);
+    });
+
+    it('should only return files uploaded by the specified client/browser', async () => {
+      const records: FileRecord[] = [
+        {
+          fileId: 'pca-file',
+          originalName: 'pca.pdf',
+          uploaderId: 'client-pca-123',
+          s3Key: 'uploads/pca-file/pca.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 100,
+          status: FileStatus.READY,
+          uploadedAt: new Date().toISOString(),
+          expiresAt: Math.floor(Date.now() / 1000) + 3600,
+          downloadCount: 0,
+        },
+        {
+          fileId: 'pcb-file',
+          originalName: 'pcb.pdf',
+          uploaderId: 'client-pcb-456',
+          s3Key: 'uploads/pcb-file/pcb.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 200,
+          status: FileStatus.READY,
+          uploadedAt: new Date().toISOString(),
+          expiresAt: Math.floor(Date.now() / 1000) + 3600,
+          downloadCount: 0,
+        },
+      ];
+
+      dynamoDbService.listFileRecords = jest.fn().mockResolvedValue(records);
+
+      const pcAResult = await service.listFiles('client-pca-123');
+      expect(pcAResult.length).toBe(1);
+      expect(pcAResult[0].fileId).toBe('pca-file');
+
+      const pcBResult = await service.listFiles('client-pcb-456');
+      expect(pcBResult.length).toBe(1);
+      expect(pcBResult[0].fileId).toBe('pcb-file');
     });
   });
 
@@ -159,14 +222,13 @@ describe('FilesService', () => {
         downloadCount: 0,
       };
 
-      awsService.getFileRecord = jest.fn().mockResolvedValue(validRecord);
-      awsService.incrementDownloadCount = jest.fn().mockResolvedValue(1);
+      dynamoDbService.getFileRecord = jest.fn().mockResolvedValue(validRecord);
+      dynamoDbService.incrementDownloadCount = jest.fn().mockResolvedValue(1);
 
       const result = await service.getDownloadUrl('valid-123');
       expect(result.downloadUrl).toBe('https://s3.amazonaws.com/test-download-url');
       expect(result.downloadCount).toBe(1);
-      expect(awsService.incrementDownloadCount).toHaveBeenCalledWith('valid-123');
+      expect(dynamoDbService.incrementDownloadCount).toHaveBeenCalledWith('valid-123');
     });
   });
 });
-
